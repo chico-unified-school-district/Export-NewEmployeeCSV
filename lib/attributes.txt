@@ -1,0 +1,69 @@
+OrgID
+NameFirst
+NameFirstPreferred
+NameLast
+NameLastCred
+NameMiddle
+NamePrefix
+NameSuffix
+SSN
+DateBirth
+GenderCode
+PersonTypeId
+EmploymentStatusCode
+EmploymentTypeCode
+DateHired
+DateExperienceBase
+DateLeaveBaseOverride
+DateAnniv
+DateLongevity
+DateTB
+TBTestTypeCode
+DateSeniority
+SeniorityRank
+EmpNum
+PermanencyCode
+DatePermanency
+DateProbationEnds
+KioskAccessEnabled
+ACA Bargaining Unit
+EthnicityCode (Race1)
+EthnicityCode1 (Race2)
+EthnicityCode2 (Race3)
+EthnicityCode3 (Race4)
+EthnicityCode4 (Race5)
+EthnicityHispanicBased (Ethnicity)
+HomeAddrStreet
+HomeAddrCity
+HomeAddrStateCode
+HomeAddrZip
+EmailPersonal
+EmailWork
+HomePhone
+HomePhoneMobile
+MailAddrStreet
+MailAddrCity
+MailAddrStateCode
+MailAddrZip
+EmergencyContact
+EmergencyContactPhone  
+EmergencyContactPhoneExt
+EmergencyContactRelationship
+EmergencyDoctor
+EmergencyDoctorPhone
+EmergencyDoctorPhoneExt
+DriversLicenseRqd
+DriversLicenseNum
+DateDriversLicenseExpiration
+EmpDirCode
+EmpDirReleaseCode
+ExperienceYearsPrior
+ExperienceYearsOutState
+ExperienceYearsInState
+DateFingerprinted
+FingerprintComment
+FingerprintTypeCode
+PhysicalTestCode
+OptOutBargUnitPersonalInfo
+RemoteSysName
+RemoteSysID+
