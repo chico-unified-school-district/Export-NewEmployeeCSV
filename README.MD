@@ -1,4 +1,4 @@
-# Create-StaffAccount
+# Export-NewEmployeeCSV
 
 Monitors an intermediate SQL table for new employee rows and writes a CSV file into a protected file share.
 
