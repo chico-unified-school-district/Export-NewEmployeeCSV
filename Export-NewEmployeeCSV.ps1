@@ -15,7 +15,21 @@ param(
  [Alias('wi')][switch]$WhatIf
 )
 
-# CSV to Fileshare
+function Export-UserDataToCSV {
+ process {
+  $_.exportFile = switch ($_) {
+   { $_.int.status -eq 'new' } { $true; break }
+   { $_.int.status -eq 'update' } { $true; break }
+   { $_.int.status -ne 'complete' -and (!(Test-Path -Path $_.file.export)) } { $true; break } # File missing for some reason
+   default { $false }
+  }
+  if ($_.exportFile -eq $false ) { return $_ }
+  Write-Host ('{0},{1},{2},{3}' -f $MyInvocation.MyCommand.Name, $_.info, $_.file.export, $_.int.status) -f Blue
+  $_.csvData | Export-Csv -Path $_.file.export -NoTypeInformation -Force -Encoding utf8
+  $_
+ }
+}
+
 function Format-CSVData {
  begin {
   $attributes = Get-Content -Path '.\lib\attributes.txt'
@@ -23,7 +37,8 @@ function Format-CSVData {
  process {
   $_.csvData = [PSCustomObject]@{}
   foreach ($attrib in $attributes) {
-   if ($_.int.$attrib) { Write-Verbose ('{0},{1},{2}' -f $MyInvocation.MyCommand.Name, $_.info, ($attrib + ': ' + $_.int.$attrib)) }
+   # if ($_.int.$attrib) { Write-Verbose ('{0},{1},{2}' -f $MyInvocation.MyCommand.Name, $_.info, ($attrib + ': ' + $_.int.$attrib)) }
+   # Int DB columns names ($_.int.$attrib) must match those in attributes.txt
    $_.csvData | Add-Member -MemberType NoteProperty -Name $attrib -Value $_.int.$attrib
   }
   $_.csvData.DateBirth = (Get-Date $_.csvData.DateBirth).ToString('MM/dd/yyyy')
@@ -31,24 +46,30 @@ function Format-CSVData {
  }
 }
 
-function Format-Object {
+function New-PSObject {
  process {
   [PSCustomObject]@{
    emp        = $null
    csvData    = $null
+   exportFile = $null
    isEntryOld = $null
-   fileName   = $null
-   fileStatus = $null
-   exportPath = $null
+   file       = $null
    info       = $null
    int        = $_
-   importFile = $null
-   status     = $_.status
+   removeFile = $null
+   status     = $null
   }
  }
 }
 
-function Set-CutoffStatus {
+function Out-Object {
+ process {
+  Write-Verbose ($MyInvocation.MyCommand.name, $_ | Out-String)
+  if ($Wait) { Read-Host ('{0}' -f ('x' * 50)) }
+ }
+}
+
+function Update-OldEntry {
  begin {
   $cutoffDate = (Get-Date).AddMonths(-3)
  }
@@ -59,7 +80,7 @@ function Set-CutoffStatus {
  }
 }
 
-function Set-EmployeeData ($instance, $db, $table) {
+function Update-EmployeeData ($instance, $db, $table) {
  begin {
   $sql = "SELECT empId,nameLast FROM $table WHERE SSNumIdFull = @ssn;"
  }
@@ -71,114 +92,63 @@ function Set-EmployeeData ($instance, $db, $table) {
  }
 }
 
-function Set-FileInfo ($driveName, $server, $share) {
+function Update-FileInfo ($driveName, $server, $share) {
  process {
+  $_.file = @{name = $null; export = $null; import = $null }
   $exportRoot = ('{0}:\' -f $driveName)
-  $_.fileName = '{0}.csv' -f ($_.int.NameFirst + '_' + $_.int.NameLast + '_' + $_.int.SSN.Substring($_.int.SSN.Length - 4))
-  $_.exportPath = '{0}{1}' -f $exportRoot, $_.fileName
-  $_.importFile = ('\\{0}\{1}\{2}' -f $server, $share, $_.fileName)
+  $_.file.name = '{0}.csv' -f ($_.int.NameFirst + '_' + $_.int.NameLast + '_' + (Get-Date $_.int.dateAdded -f yyyy-MM-dd))
+  $_.file.export = '{0}{1}' -f $exportRoot, $_.file.name # Path for csv export
+  $_.file.import = ('\\{0}\{1}\{2}' -f $server, $share, $_.file.name) # Path for importing to employee mgmt system
   $_
  }
 }
 
-function Set-Info {
+function Update-Info {
  process {
-  $_.info = '[{0},{1},{2}]' -f ($_.int.NameFirst + ' ' + $_.int.NameLast), $_.int.DateBirth, $_.int.id
+  $_.info = '[{0},dob: {1},row id: {2}]' -f ($_.int.NameFirst + ' ' + $_.int.NameLast), $_.int.DateBirth, $_.int.id
   $_
  }
 }
 
-function Set-Status {
+function Update-Status {
  process {
-  $content = Get-Content -Path $_.exportPath -ErrorAction SilentlyContinue
-  if (!(Test-Path -Path $_.exportPath) -or $content -notmatch '\w') {
-   $_.status = 'error'
-   Write-Host ('{0},{1},Error: {2}' -f $MyInvocation.MyCommand.Name, $_.info, $_.exportPath) -F Red
-   return $_
+  $_.status = switch ($_) {
+   { $_.removeFile -eq $true } { 'complete'; break }
+   { $_.exportFile -eq $true } { 'written' ; break }
+   default { $_.int.status }
   }
-  $_.status = 'Pending Review and New User File Import'
+  Write-Verbose ('{0},{1},{2},{3}' -f $MyInvocation.MyCommand.Name, $_.info, $_.exportPath, $_.status)
   $_
- }
-}
-
-function Show-Object {
- process {
-  Write-Verbose ($MyInvocation.MyCommand.name, $_ | Out-String)
-  if ($Wait) { Read-Host ('{0}' -f ('x' * 50)) }
  }
 }
 
 function Update-IntDB ($sqlInstance, $table) {
  begin {
-  $sql = "UPDATE $table SET status = @status, importFilePath = @importFilePath WHERE id = @id;"
+  $sql = "UPDATE $table SET status = @status, importFilePath = @importFilePath, dts = GETDATE() WHERE id = @id;"
  }
  process {
-  $sqlVars = @{id = $_.int.id; status = $_.status; importFilePath = $_.importFile }
+  if (($_.int.status -eq $_.status) -and ($_.int.importFilePath -eq $_.file.import)) { return $_ } # No changes
+  $sqlVars = @{id = $_.int.id; status = $_.status; importFilePath = $_.file.import }
   Write-Verbose ('{0},{1},[{2}],[{3}]' -f $MyInvocation.MyCommand.Name, $_.info, $sql, ($sqlVars.Values -join ','))
   Write-Host ('{0},{1}' -f $MyInvocation.MyCommand.Name, $_.info) -F Cyan
-  #TODO
-  # if (!$WhatIf) { Invoke-DbaQuery -SqlInstance $sqlInstance -Query $sql -SqlParameters $sqlVars }
+  if (!$WhatIf) { Invoke-DbaQuery -SqlInstance $sqlInstance -Query $sql -SqlParameters $sqlVars }
   $_
  }
 }
-
-function Write-CSVFile {
- process {
-  $_.fileStatus = switch ($_) {
-   { $_.emp } { @{skip = $true; msg = 'Already Imported' }; break }
-   { $_.int.status -eq 'update' } { @{writeFile = $true; msg = 'Updated file written' }; break }
-   { Test-Path -Path $_.exportPath } { @{writeFile = $false; msg = 'File exists' }; break }
-   default { @{writeFile = $true ; msg = 'New file written' }; break }
-  }
-  Write-Host ('{0},{1},{2},{3}' -f $MyInvocation.MyCommand.Name, $_.info, $_.exportPath, $_.fileStatus.msg) -f Blue
-  if ($_.fileStatus.skip) { return $_ }
-  $_.csvData | Export-Csv -Path $_.exportPath -NoTypeInformation -Force -Encoding utf8
-  $_
- }
-}
-# function Write-CSVFile {
-#  process {
-#   if ($_.imported) { return $_ }
-#   if ((Test-Path -Path $_.exportPath) -and ($_.status -ne 'update')) {
-#    Write-Host ('{0},{1},File Exists: {2}' -f $MyInvocation.MyCommand.Name, $_.info, $_.exportPath) -F Yellow
-#    return $_
-#   }
-#   Write-Host ('{0},{1}' -f $MyInvocation.MyCommand.Name, $_.exportPath) -f Blue
-#   $_.csvData | Export-Csv -Path $_.exportPath -NoTypeInformation -Force -Encoding utf8
-#   $_
-#  }
-# }
-
-# function Get-CsvData ($drive) {
-#  process {
-#   $filePath = ($drive + ':\' + $_.file)
-#   Write-Verbose ('{0},{1}' -f $MyInvocation.MyCommand.Name, $filePath)
-#   $_.int = Import-Csv -Path $filePath
-#   $_
-#  }
-# }
 
 function Remove-CsvFile ($drive) {
  process {
-  $filePath = ($drive + ':\' + $_.fileName)
-  if (!(Test-Path -Path $filePath)) { return } # Skip when file missing
-  if (!$_.emp) { return } # Skip when not yet in Employee mgmt system
-  Write-Host ('{0},{1},{2}' -f $MyInvocation.MyCommand.Name, $_.info, $filePath)
-  Remove-Item -Path $filePath -Confirm:$false -WhatIf:$WhatIf
+  $_.removeFile = switch ($_) {
+   { !$_.emp -and $_.isEntryOld } { $true ; break } # Remove if old
+   { $_.emp } { $true; break } # Remove if exists in employee system
+   default { $false } # Do not delete
+  }
+  if ($_.removeFile -eq $false) { return $_ }
+  Write-Host ('{0},{1},{2}' -f $MyInvocation.MyCommand.Name, $_.info, $_.file.export)
+  if (Test-Path -Path $_.file.export) { Remove-Item -Path $_.file.export -Confirm:$false -WhatIf:$WhatIf }
   $_
  }
 }
-
-# function Remove-CsvFile ($drive) {
-#  process {
-#   if (!$_.imported) { return $_ }
-#   $filePath = ($drive + ':\' + $_.file)
-#   if (!(Test-Path -Path $filePath)) { return }
-#   Write-Host ('{0},{1},{2}' -f $MyInvocation.MyCommand.Name, $_.info, $filePath)
-#   Remove-Item -Path $filePath -Confirm:$false -WhatIf:$WhatIf
-#   $_
-#  }
-# }
 
 # ===================================================== main =====================================================
 Import-Module -Name dbatools -Cmdlet Set-DbatoolsConfig, Invoke-DbaQuery, Connect-DbaInstance, Disconnect-DbaInstance
@@ -206,33 +176,24 @@ $driveParams = @{
 New-PSDrive @driveParams | Out-Null
 
 # $newAccountSql = 'SELECT * FROM {0}' -f $SQLTable
-$newAccountSql = "SELECT * FROM {0} WHERE status IN ('new','update')" -f $IntSQLTable
+$newAccountSql = "SELECT * FROM {0} WHERE status NOT IN ('complete')" -f $IntSQLTable
 
 $stopTime = if ($WhatIf) { Get-Date } else { Get-Date '5:00pm' }
-$delay = if ($WhatIf) { 0 } else { 10 } # Wait x seconds between runs
+$delay = if ($WhatIf) { 0 } else { 30 } # Wait x seconds between runs
 
 do {
  Invoke-DbaQuery -SqlInstance $intSQLInstance -Query $newAccountSql | ConvertTo-Csv | ConvertFrom-Csv |
-  Format-Object |
-   Set-Info |
-    Set-EmployeeData -instance $empSQLInstance -table $EmpSQLTable |
-     Set-FileInfo -driveName $driveName -server $FileServer -share $ShareName |
-      Set-CutoffStatus |
+  New-PSObject |
+   Update-Info |
+    Update-EmployeeData -instance $empSQLInstance -table $EmpSQLTable |
+     Update-FileInfo -driveName $driveName -server $FileServer -share $ShareName |
+      Update-OldEntry |
        Format-CSVData |
-        Write-CSVFile |
-         #       Set-Status |
-         #        Update-IntDB -sqlInstance $intSQLInstance -table $SQLTable |
-         #         Remove-CsvFile -drive $driveName |
-         Show-Object
-
- # Remove csv files for imported employees
- # Get-ChildItem -Path "${driveName}:\" -Filter *.csv |
- #  Format-RemoveObject |
- #   Get-CsvData -drive $driveName |
- #    Set-Info |
- #     Get-EmployeeData -instance $empSQLInstance -table $EmpSQLTable |
- #      Remove-CsvFile -drive $driveName |
- #       Show-Object
+        Export-UserDataToCSV |
+         Remove-CsvFile -drive $driveName |
+          Update-Status |
+           Update-IntDB -sqlInstance $intSQLInstance -table $IntSQLTable |
+            Out-Object
 
  Clear-SessionData
 
