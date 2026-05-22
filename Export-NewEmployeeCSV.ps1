@@ -1,16 +1,16 @@
 ﻿[cmdletbinding()]
 param(
- [string]$IntSQlServer,
- [string]$IntSQLDatabase,
- [string]$IntSQLTable,
- [System.Management.Automation.PSCredential]$IntSQLCredential,
  [string]$EmpSQlServer,
  [string]$EmpSQLDatabase,
  [string]$EmpSQLTable,
  [System.Management.Automation.PSCredential]$EmpSQLCredential,
  [string]$FileServer,
- [string]$ShareName,
  [System.Management.Automation.PSCredential]$FileServerCredential,
+ [string]$IntSQlServer,
+ [string]$IntSQLDatabase,
+ [string]$IntSQLTable,
+ [System.Management.Automation.PSCredential]$IntSQLCredential,
+ [string]$ShareName,
  [switch]$Wait,
  [Alias('wi')][switch]$WhatIf
 )
