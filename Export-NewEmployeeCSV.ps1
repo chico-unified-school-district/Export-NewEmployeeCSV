@@ -52,6 +52,7 @@ function New-PSObject {
    [PSCustomObject]$intData = $null
    [string]$msgInfo = $null
    [bool]$removeFile = $null
+   # [bool]$renameFile = $null
    [string]$status = $null
   }
  }
@@ -92,13 +93,14 @@ function Update-PropIsEntryOld {
  }
 }
 
-function Update-PropEmp ($instance, $db, $table) {
+function Update-PropEmp ($instance, $database, $table) {
  begin {
   $sql = "SELECT empId,nameLast FROM $table WHERE SSNumIdFull = @ssn;"
  }
  process {
   $sqlVars = @{ssn = $_.fullSSN }
-  Write-Verbose ('{0},{1},[{2}],[{3}],[{4}]' -f $MyInvocation.MyCommand.Name, $_.msgInfo, $sql, $db, ($sqlVars.Values -join ','))
+  $msgData = $MyInvocation.MyCommand.Name, $_.msgInfo, $sql, $database, ($sqlVars.Values -join ',')
+  Write-Verbose ('{0},{1},[{2}],[{3}],[{4}]' -f $msgData)
   $_.emp = Invoke-DbaQuery -SqlInstance $instance -Query $sql -SqlParameters $sqlVars | ConvertTo-Csv | ConvertFrom-Csv
   $_
  }
@@ -106,10 +108,10 @@ function Update-PropEmp ($instance, $db, $table) {
 
 function Update-PropFile ($driveName, $server, $share) {
  process {
-  $_.file = @{name = $null; export = $null; import = $null }
-  $exportRoot = ('{0}:\' -f $driveName)
+  $_.file = @{name = $null; exportRoot = $null; export = $null; import = $null }
+  $_.file.exportRoot = ('{0}:\' -f $driveName)
   $_.file.name = '{0}.csv' -f ($_.intData.NameFirst + '_' + $_.intData.NameLast + '_' + (Get-Date $_.intData.dateAdded -f yyyy-MM-dd))
-  $_.file.export = '{0}{1}' -f $exportRoot, $_.file.name # Path for csv export
+  $_.file.export = '{0}{1}' -f $_.file.exportRoot, $_.file.name # Path for csv export
   $_.file.import = ('\\{0}\{1}\{2}' -f $server, $share, $_.file.name) # Path for importing to employee mgmt system
   $_
  }
@@ -183,6 +185,19 @@ function Remove-CsvFile ($drive) {
  }
 }
 
+function Remove-OrphanedCsvFile {
+ process {
+  # File needs to be removed when first or last name changes
+  if ($_.int.status -eq 'new') { return $_ } # Not needed for new entries
+  $currentName = ($_.intData.importFilePath -split '\\')[-1]
+  if ($currentName -eq $_.file.name) { return $_ } # Name is correct
+  $currentPath = $_.file.exportRoot + $currentName
+  Write-Host ('{0},{1},{2}' -f $MyInvocation.MyCommand.Name, $_.msgInfo, $currentPath) -F Magenta
+  if (Test-Path -Path $currentPath) { Remove-Item -Path $currentPath -Confirm:$false }
+  $_
+ }
+}
+
 # ===================================================== main =====================================================
 Import-Module -Name dbatools -Cmdlet Set-DbatoolsConfig, Invoke-DbaQuery, Connect-DbaInstance, Disconnect-DbaInstance
 Import-Module -Name CommonScriptFunctions -Cmdlet Show-TestRun, New-SqlOperation, Clear-SessionData
@@ -219,17 +234,18 @@ do {
   New-PSObject |
    Update-PropMsgInfo |
     Update-PropFullSSN |
-     Update-PropEmp -instance $empSQLInstance -table $EmpSQLTable |
+     Update-PropEmp -instance $empSQLInstance -database $EmpSQLDatabase -table $EmpSQLTable |
       Update-PropFile -driveName $driveName -server $FileServer -share $ShareName |
        Update-PropIsEntryOld |
         Update-PropRemoveFile |
          Update-PropExportFile |
           Format-CSVData |
-           Export-UserDataToCSV |
-            Remove-CsvFile -drive $driveName |
-             Update-PropStatus |
-              Update-IntDB -sqlInstance $intSQLInstance -table $IntSQLTable |
-               Out-Object
+           Remove-OrphanedCsvFile |
+            Export-UserDataToCSV |
+             Remove-CsvFile -drive $driveName |
+              Update-PropStatus |
+               Update-IntDB -sqlInstance $intSQLInstance -table $IntSQLTable |
+                Out-Object
 
  Clear-SessionData
 
