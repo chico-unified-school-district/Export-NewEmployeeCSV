@@ -157,7 +157,7 @@ function Update-PropStatus {
    { $_.exportFile -eq $true } { 'written' ; break }
    default { $_.intData.status }
   }
-  Write-Verbose ('{0},{1},{2},{3}' -f $MyInvocation.MyCommand.Name, $_.msgInfo, $_.exportPath, $_.status)
+  Write-Verbose ('{0},{1},{2},{3}' -f $MyInvocation.MyCommand.Name, $_.msgInfo, $_.file.exportPath, $_.status)
   $_
  }
 }
