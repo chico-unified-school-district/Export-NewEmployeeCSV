@@ -17,12 +17,6 @@ param(
 
 function Export-UserDataToCSV {
  process {
-  $_.exportFile = switch ($_) {
-   { $_.intData.status -eq 'new' } { $true; break }
-   { $_.intData.status -eq 'update' } { $true; break }
-   { $_.intData.status -ne 'complete' -and (!(Test-Path -Path $_.file.export)) } { $true; break } # File missing for some reason
-   default { $false }
-  }
   if ($_.exportFile -eq $false ) { return $_ }
   Write-Host ('{0},{1},{2},{3}' -f $MyInvocation.MyCommand.Name, $_.msgInfo, $_.file.export, $_.intData.status) -f Blue
   $_.csvData | Export-Csv -Path $_.file.export -NoTypeInformation -Force -Encoding utf8
@@ -48,20 +42,21 @@ function Format-CSVData {
 
 function New-PSObject {
  begin {
-  class Template {
+  class newEmpTemplate {
    [PSCustomObject]$emp = $null
    [PSCustomObject]$csvData = $null
    [bool]$exportFile = $null
    [bool]$isEntryOld = $null
    [hashtable]$file = $null
+   [string]$fullSSN = $null
+   [PSCustomObject]$intData = $null
    [string]$msgInfo = $null
-   [PSCustomObject]$intData = $_
    [bool]$removeFile = $null
    [string]$status = $null
   }
  }
  process {
-  $obj = [template]::new()
+  $obj = [newEmpTemplate]::new()
   $obj.intData = $_
   $obj
  }
@@ -74,7 +69,19 @@ function Out-Object {
  }
 }
 
-function Update-IsEntryOld {
+function Update-PropExportFile {
+ process {
+  $_.exportFile = switch ($_) {
+   { $_.intData.status -eq 'new' } { $true; break }
+   { $_.intData.status -eq 'update' } { $true; break }
+   { $_.intData.status -ne 'complete' -and (!(Test-Path -Path $_.file.export)) } { $true; break } # File missing for some reason
+   default { $false }
+  }
+  $_
+ }
+}
+
+function Update-PropIsEntryOld {
  begin {
   $cutoffDate = (Get-Date).AddMonths(-3)
  }
@@ -85,19 +92,19 @@ function Update-IsEntryOld {
  }
 }
 
-function Update-Emp ($instance, $db, $table) {
+function Update-PropEmp ($instance, $db, $table) {
  begin {
   $sql = "SELECT empId,nameLast FROM $table WHERE SSNumIdFull = @ssn;"
  }
  process {
-  $sqlVars = @{ssn = $_.intData.SSN }
+  $sqlVars = @{ssn = $_.fullSSN }
   Write-Verbose ('{0},{1},[{2}],[{3}],[{4}]' -f $MyInvocation.MyCommand.Name, $_.msgInfo, $sql, $db, ($sqlVars.Values -join ','))
   $_.emp = Invoke-DbaQuery -SqlInstance $instance -Query $sql -SqlParameters $sqlVars | ConvertTo-Csv | ConvertFrom-Csv
   $_
  }
 }
 
-function Update-File ($driveName, $server, $share) {
+function Update-PropFile ($driveName, $server, $share) {
  process {
   $_.file = @{name = $null; export = $null; import = $null }
   $exportRoot = ('{0}:\' -f $driveName)
@@ -108,14 +115,40 @@ function Update-File ($driveName, $server, $share) {
  }
 }
 
-function Update-MsgInfo {
+function Update-PropFullSSN {
  process {
-  $_.msgInfo = '[{0},dob: {1},row id: {2}]' -f ($_.intData.NameFirst + ' ' + $_.intData.NameLast), $_.intData.DateBirth, $_.intData.id
+  # 1. Strip out everything that is NOT a digit (\D)
+  $cleanSSN = $_.intData.SSN -replace '\D', ''
+  # 2. Reformat the remaining 9 digits using capture groups
+  if ($cleanSSN.Length -ne 9) {
+   Write-Warning ('{0},{1},Invalid SSN length [{2}]' -f $MyInvocation.MyCommand.Name, $_.msgInfo, $cleanSSN)
+  }
+  $_.fullSSN = $cleanSSN -replace '^(\d{3})(\d{2})(\d{4})$', '$1-$2-$3'
   $_
  }
 }
 
-function Update-Status {
+function Update-PropMsgInfo {
+ process {
+  $fullName = $_.intData.NameFirst + ' ' + $_.intData.NameLast
+  $shortDoB = Get-Date $_.intData.DateBirth -f 'MM/dd/yyyy'
+  $_.msgInfo = '[{0},dob: {1},row id: {2}]' -f $fullName, $shortDoB, $_.intData.id
+  $_
+ }
+}
+
+function Update-PropRemoveFile {
+ process {
+  $_.removeFile = switch ($_) {
+   { !$_.emp -and $_.isEntryOld } { $true ; break } # Remove if old
+   { $_.emp } { $true; break } # Remove if exists in employee system
+   default { $false } # Do not delete
+  }
+  $_
+ }
+}
+
+function Update-PropStatus {
  process {
   $_.status = switch ($_) {
    { $_.removeFile -eq $true } { 'complete'; break }
@@ -143,11 +176,6 @@ function Update-IntDB ($sqlInstance, $table) {
 
 function Remove-CsvFile ($drive) {
  process {
-  $_.removeFile = switch ($_) {
-   { !$_.emp -and $_.isEntryOld } { $true ; break } # Remove if old
-   { $_.emp } { $true; break } # Remove if exists in employee system
-   default { $false } # Do not delete
-  }
   if ($_.removeFile -eq $false) { return $_ }
   Write-Host ('{0},{1},{2}' -f $MyInvocation.MyCommand.Name, $_.msgInfo, $_.file.export)
   if (Test-Path -Path $_.file.export) { Remove-Item -Path $_.file.export -Confirm:$false -WhatIf:$WhatIf }
@@ -189,16 +217,19 @@ $delay = if ($WhatIf) { 0 } else { 30 } # Wait x seconds between runs
 do {
  Invoke-DbaQuery -SqlInstance $intSQLInstance -Query $newAccountSql | ConvertTo-Csv | ConvertFrom-Csv |
   New-PSObject |
-   Update-MsgInfo |
-    Update-Emp -instance $empSQLInstance -table $EmpSQLTable |
-     Update-File -driveName $driveName -server $FileServer -share $ShareName |
-      Update-IsEntryOld |
-       Format-CSVData |
-        Export-UserDataToCSV |
-         Remove-CsvFile -drive $driveName |
-          Update-Status |
-           Update-IntDB -sqlInstance $intSQLInstance -table $IntSQLTable |
-            Out-Object
+   Update-PropMsgInfo |
+    Update-PropFullSSN |
+     Update-PropEmp -instance $empSQLInstance -table $EmpSQLTable |
+      Update-PropFile -driveName $driveName -server $FileServer -share $ShareName |
+       Update-PropIsEntryOld |
+        Update-PropRemoveFile |
+         Update-PropExportFile |
+          Format-CSVData |
+           Export-UserDataToCSV |
+            Remove-CsvFile -drive $driveName |
+             Update-PropStatus |
+              Update-IntDB -sqlInstance $intSQLInstance -table $IntSQLTable |
+               Out-Object
 
  Clear-SessionData
 
