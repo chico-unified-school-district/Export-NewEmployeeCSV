@@ -36,6 +36,7 @@ function Format-CSVData {
    $_.csvData | Add-Member -MemberType NoteProperty -Name $attrib -Value $_.intData.$attrib
   }
   $_.csvData.DateBirth = (Get-Date $_.csvData.DateBirth).ToString('MM/dd/yyyy')
+  $_.csvData.SSN = $_.fullSSN
   $_
  }
 }
@@ -163,11 +164,11 @@ function Update-PropStatus {
 
 function Update-IntDB ($sqlInstance, $table) {
  begin {
-  $sql = "UPDATE $table SET status = @status, importFilePath = @importFilePath, dts = GETDATE() WHERE id = @id;"
+  $sql = "UPDATE $table SET status = @status, SSN = @ssn,importFilePath = @importFilePath, dts = GETDATE() WHERE id = @id;"
  }
  process {
   if (($_.intData.status -eq $_.status) -and ($_.intData.importFilePath -eq $_.file.import)) { return $_ } # No changes
-  $sqlVars = @{id = $_.intData.id; status = $_.status; importFilePath = $_.file.import }
+  $sqlVars = @{id = $_.intData.id; SSN = $_.fullSSN; status = $_.status; importFilePath = $_.file.import }
   Write-Verbose ('{0},{1},[{2}],[{3}]' -f $MyInvocation.MyCommand.Name, $_.msgInfo, $sql, ($sqlVars.Values -join ','))
   Write-Host ('{0},{1}' -f $MyInvocation.MyCommand.Name, $_.msgInfo) -F Cyan
   if (!$WhatIf) { Invoke-DbaQuery -SqlInstance $sqlInstance -Query $sql -SqlParameters $sqlVars }
