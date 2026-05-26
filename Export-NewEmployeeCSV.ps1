@@ -133,8 +133,7 @@ function Update-PropFullSSN {
 function Update-PropMsgInfo {
  process {
   $fullName = $_.intData.NameFirst + ' ' + $_.intData.NameLast
-  $shortDoB = Get-Date $_.intData.DateBirth -f 'MM/dd/yyyy'
-  $_.msgInfo = '[{0},dob: {1},row id: {2}]' -f $fullName, $shortDoB, $_.intData.id
+  $_.msgInfo = '[{0},id:{1}]' -f $fullName, $_.intData.id
   $_
  }
 }
@@ -188,7 +187,8 @@ function Remove-CsvFile ($drive) {
 function Remove-OrphanedCsvFile {
  process {
   # File needs to be removed when first or last name changes
-  if ($_.int.status -eq 'new') { return $_ } # Not needed for new entries
+  if ($_.intData.status -eq 'new') { return $_ } # Not needed for new entries
+  if ([string]::IsNullOrWhiteSpace($_.intData.importFilePath)) { return $_ }
   $currentName = ($_.intData.importFilePath -split '\\')[-1]
   if ($currentName -eq $_.file.name) { return $_ } # Name is correct
   $currentPath = $_.file.exportRoot + $currentName
@@ -204,9 +204,9 @@ Import-Module -Name CommonScriptFunctions -Cmdlet Show-TestRun, New-SqlOperation
 
 Show-BlockInfo Main
 if ($WhatIf) { Show-TestRun }
-
-
 Clear-SessionData
+
+Write-Host ('Employee SQL Info: {0}\{1}' -f $EmpSQlServer, $EmpSQLDatabase)
 
 $intSQLInstance = Connect-DbaInstance -SqlInstance $intSQLServer -Database $IntSQLDatabase -SqlCredential $IntSQLCredential
 $empSQLInstance = Connect-DbaInstance -SqlInstance $EmpSQLServer -Database $EmpSQLDatabase -SqlCredential $EmpSQLCredential
